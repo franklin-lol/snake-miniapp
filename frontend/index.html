@@ -1,0 +1,498 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
+<title>SN▓KE</title>
+<script src="https://telegram.org/js/telegram-web-app.js"></script>
+<style>
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+:root {
+  --bg:#0b0c0f; --surface:#13151a; --border:#1f2128; --dim:#2e3038;
+  --muted:#6b7080; --text:#d4d8e2; --bright:#eef0f5;
+  --accent:#c8fb4a; --accent2:#4afbc8; --danger:#fb4a6e;
+}
+html,body { height:100%; background:var(--bg); color:var(--text); font-family:'Courier New',monospace; user-select:none; overflow:hidden; touch-action:none; }
+#app { display:flex; flex-direction:column; height:100vh; max-width:420px; margin:0 auto; }
+.screen { display:none; flex-direction:column; height:100%; }
+.screen.active { display:flex; }
+
+.bar { display:flex; align-items:center; justify-content:space-between; padding:10px 16px 8px; border-bottom:1px solid var(--border); flex-shrink:0; }
+.bar-title { font-size:11px; letter-spacing:4px; color:var(--muted); }
+.bar-score { font-size:13px; color:var(--accent); letter-spacing:1px; font-weight:700; }
+.bar-btn { font-size:18px; color:var(--dim); cursor:pointer; padding:0 4px; }
+
+#canvas-wrap { display:flex; justify-content:center; align-items:center; flex:1; padding:6px 0 2px; position:relative; }
+canvas { display:block; image-rendering:pixelated; }
+
+#effect-banner { position:absolute; top:8px; left:50%; transform:translateX(-50%); font-size:11px; letter-spacing:2px; padding:4px 14px; border-radius:20px; border:1px solid; opacity:0; transition:opacity .3s; pointer-events:none; white-space:nowrap; }
+#effect-banner.show { opacity:1; }
+
+#dpad { display:grid; grid-template-areas:". u ." "l . r" ". d ."; grid-template-columns:1fr 1fr 1fr; gap:6px; padding:8px 40px 12px; flex-shrink:0; }
+.dpad-btn { background:var(--surface); border:1px solid var(--border); border-radius:8px; height:44px; display:flex; align-items:center; justify-content:center; font-size:18px; color:var(--dim); cursor:pointer; transition:background .1s,border-color .1s,color .1s; -webkit-tap-highlight-color:transparent; }
+.dpad-btn:active { background:var(--border); border-color:var(--accent); color:var(--accent); }
+[data-dir="UP"] { grid-area:u; } [data-dir="LEFT"] { grid-area:l; } [data-dir="RIGHT"] { grid-area:r; } [data-dir="DOWN"] { grid-area:d; }
+
+#food-legend { display:flex; justify-content:center; gap:10px; flex-wrap:wrap; padding:0 16px 6px; flex-shrink:0; }
+.legend-item { display:flex; align-items:center; gap:4px; font-size:9px; color:var(--muted); letter-spacing:1px; }
+.legend-dot { width:8px; height:8px; border-radius:2px; flex-shrink:0; }
+
+#home { justify-content:center; align-items:center; padding:20px 20px; gap:0; }
+.home-logo { font-size:48px; line-height:1; color:var(--accent); letter-spacing:-2px; font-weight:900; margin-bottom:4px; }
+.home-sub { font-size:10px; letter-spacing:5px; color:var(--dim); margin-bottom:22px; }
+.profile-card { width:100%; background:var(--surface); border:1px solid var(--border); border-radius:10px; padding:14px 16px; display:flex; align-items:center; gap:14px; margin-bottom:12px; }
+.avatar { width:40px; height:40px; border-radius:50%; background:var(--dim); display:flex; align-items:center; justify-content:center; font-size:14px; font-weight:700; color:var(--accent); flex-shrink:0; }
+.profile-info { flex:1; min-width:0; }
+.profile-name { font-size:14px; color:var(--bright); font-weight:700; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+.profile-best { font-size:11px; color:var(--muted); margin-top:3px; }
+.profile-best span { color:var(--accent); }
+
+.food-preview { width:100%; background:var(--surface); border:1px solid var(--border); border-radius:10px; padding:12px 16px; margin-bottom:12px; }
+.food-preview-title { font-size:9px; letter-spacing:3px; color:var(--muted); margin-bottom:10px; }
+.food-grid { display:grid; grid-template-columns:1fr 1fr; gap:8px; }
+.food-row { display:flex; align-items:center; gap:8px; }
+.food-sym { width:24px; height:24px; border-radius:5px; display:flex; align-items:center; justify-content:center; flex-shrink:0; }
+.food-name { font-size:11px; }
+.food-desc { font-size:10px; color:var(--muted); margin-top:1px; }
+
+.btn-row { display:flex; flex-direction:column; gap:10px; width:100%; }
+.btn { width:100%; padding:13px; border-radius:8px; border:1px solid var(--border); background:var(--surface); color:var(--text); font-family:inherit; font-size:12px; letter-spacing:3px; cursor:pointer; transition:border-color .15s,color .15s,background .15s; -webkit-tap-highlight-color:transparent; }
+.btn:active { background:var(--border); }
+.btn.primary { background:var(--accent); color:var(--bg); border-color:var(--accent); font-weight:700; }
+.btn.primary:active { background:#aade30; }
+.btn.ghost { color:var(--muted); }
+
+#over { justify-content:center; align-items:center; padding:20px; gap:12px; }
+.over-title { font-size:11px; letter-spacing:5px; color:var(--danger); }
+.over-score-big { font-size:60px; font-weight:900; color:var(--bright); line-height:1; letter-spacing:-3px; }
+.over-meta { font-size:11px; color:var(--muted); letter-spacing:1px; text-align:center; line-height:2.2; }
+.over-meta span { color:var(--accent2); }
+.over-rank { font-size:13px; color:var(--accent); letter-spacing:1px; }
+.food-breakdown { width:100%; background:var(--surface); border:1px solid var(--border); border-radius:8px; padding:10px 14px; }
+.breakdown-row { display:flex; align-items:center; justify-content:space-between; padding:4px 0; font-size:11px; border-bottom:1px solid var(--dim); }
+.breakdown-row:last-child { border-bottom:none; }
+.breakdown-left { display:flex; align-items:center; gap:8px; color:var(--muted); }
+.breakdown-val { color:var(--text); font-weight:700; }
+
+#board { flex-direction:column; }
+.board-list { flex:1; overflow-y:auto; padding:8px 0; }
+.board-row { display:flex; align-items:center; gap:12px; padding:10px 16px; border-bottom:1px solid var(--border); }
+.board-row.me { background:#171d12; }
+.board-rank { font-size:11px; color:var(--dim); width:24px; text-align:right; flex-shrink:0; }
+.board-rank.gold { color:#f5c842; } .board-rank.silver { color:#a0a8b8; } .board-rank.bronze { color:#c87c42; }
+.board-av { width:30px; height:30px; border-radius:50%; background:var(--border); display:flex; align-items:center; justify-content:center; font-size:11px; font-weight:700; color:var(--accent); flex-shrink:0; }
+.board-name { flex:1; font-size:13px; color:var(--text); min-width:0; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+.board-score { font-size:13px; color:var(--accent); font-weight:700; flex-shrink:0; }
+.board-empty { padding:40px 16px; text-align:center; color:var(--muted); font-size:12px; letter-spacing:2px; }
+
+#pause-overlay { display:none; position:absolute; inset:0; background:rgba(11,12,15,.88); z-index:10; align-items:center; justify-content:center; flex-direction:column; gap:20px; }
+#pause-overlay.show { display:flex; }
+.pause-label { font-size:11px; letter-spacing:5px; color:var(--muted); }
+
+.bottom-nav { display:flex; border-top:1px solid var(--border); flex-shrink:0; }
+.nav-btn { flex:1; padding:10px 4px 8px; text-align:center; font-size:9px; letter-spacing:2px; color:var(--muted); cursor:pointer; -webkit-tap-highlight-color:transparent; }
+.nav-btn.active { color:var(--accent); }
+.nav-icon { font-size:18px; display:block; margin-bottom:2px; }
+#game { position:relative; }
+</style>
+</head>
+<body>
+<div id="app">
+
+  <div id="home" class="screen active">
+    <div class="home-logo">SN▓KE</div>
+    <div class="home-sub">v2.0 · online</div>
+    <div class="profile-card">
+      <div class="avatar" id="home-avatar">?</div>
+      <div class="profile-info">
+        <div class="profile-name" id="home-name">Loading...</div>
+        <div class="profile-best">Best: <span id="home-best">—</span> &nbsp;·&nbsp; Games: <span id="home-games">—</span></div>
+      </div>
+    </div>
+    <div class="food-preview">
+      <div class="food-preview-title">FIELD GUIDE</div>
+      <div class="food-grid" id="food-guide"></div>
+    </div>
+    <div class="btn-row">
+      <button class="btn primary" id="btn-new">New game</button>
+      <button class="btn" id="btn-continue" style="display:none">Continue</button>
+      <button class="btn ghost" id="btn-board-home">Leaderboard</button>
+    </div>
+  </div>
+
+  <div id="game" class="screen">
+    <div class="bar">
+      <div class="bar-title">SN▓KE</div>
+      <div class="bar-score">Score: <span id="score-display">0</span></div>
+      <div class="bar-btn" id="pause-btn">⏸</div>
+    </div>
+    <div id="canvas-wrap">
+      <canvas id="canvas"></canvas>
+      <div id="effect-banner"></div>
+    </div>
+    <div id="food-legend"></div>
+    <div id="dpad">
+      <button class="dpad-btn" data-dir="UP">↑</button>
+      <button class="dpad-btn" data-dir="LEFT">←</button>
+      <button class="dpad-btn" data-dir="RIGHT">→</button>
+      <button class="dpad-btn" data-dir="DOWN">↓</button>
+    </div>
+    <div id="pause-overlay">
+      <div class="pause-label">Paused</div>
+      <button class="btn primary" id="btn-resume" style="width:180px">Resume</button>
+      <button class="btn ghost" id="btn-quit" style="width:180px">Save & quit</button>
+    </div>
+  </div>
+
+  <div id="over" class="screen">
+    <div class="over-title">Game over</div>
+    <div class="over-score-big" id="over-score">0</div>
+    <div class="over-meta" id="over-meta"></div>
+    <div class="food-breakdown" id="food-breakdown"></div>
+    <div class="over-rank" id="over-rank"></div>
+    <div class="btn-row" style="width:100%;margin-top:4px">
+      <button class="btn primary" id="btn-retry">Play again</button>
+      <button class="btn ghost" id="btn-over-board">Leaderboard</button>
+      <button class="btn ghost" id="btn-over-home">Home</button>
+    </div>
+  </div>
+
+  <div id="board" class="screen">
+    <div class="bar">
+      <div class="bar-title">Leaderboard</div>
+      <div class="bar-btn" id="board-refresh" style="font-size:20px">↻</div>
+    </div>
+    <div class="board-list" id="board-list"><div class="board-empty">Loading...</div></div>
+    <div class="bottom-nav">
+      <div class="nav-btn" id="nav-home"><span class="nav-icon">⌂</span>Home</div>
+      <div class="nav-btn active"><span class="nav-icon">◈</span>Top</div>
+      <div class="nav-btn" id="nav-play"><span class="nav-icon">▶</span>Play</div>
+    </div>
+  </div>
+
+</div>
+<script>
+const tg = window.Telegram?.WebApp;
+if (tg) { tg.ready(); tg.expand(); }
+const TG_USER = tg?.initDataUnsafe?.user || { id: 100000 + Math.floor(Math.random()*900000), first_name:"Player", username:null };
+const API = "/api";
+
+const CELL=18, COLS=20, ROWS=20, W=COLS*CELL, H=ROWS*CELL;
+const canvas=document.getElementById("canvas"), ctx=canvas.getContext("2d");
+canvas.width=W; canvas.height=H;
+
+// ── Food catalog ──────────────────────────────────────────────────────────────
+const FOOD_TYPES = [
+  { id:"berry",  glyph:"◉", color:"#fb4a6e", weight:55, pts:l=>l*10,  effect:null,              name:"Berry",  desc:"Standard · +score",        rare:false },
+  { id:"gem",    glyph:"◆", color:"#4afbc8", weight:8,  pts:l=>l*40,  effect:null,              name:"Gem",    desc:"Rare · big bonus",          rare:true  },
+  { id:"bolt",   glyph:"↯", color:"#f5c842", weight:14, pts:l=>l*8,   effect:{type:"speed",dur:3000}, name:"Charge", desc:"Speed ×2 · 3 sec",    rare:false },
+  { id:"frost",  glyph:"❋", color:"#79aaff", weight:12, pts:l=>l*15,  effect:{type:"slow", dur:4000}, name:"Frost",  desc:"Slow motion · 4 sec", rare:false },
+  { id:"poison", glyph:"✕", color:"#b44afb", weight:6,  pts:l=>0,     effect:{type:"poison"},   name:"Poison", desc:"Shrinks −3 or game over",   rare:false },
+  { id:"relic",  glyph:"◎", color:"#ff9f4a", weight:5,  pts:l=>l*25,  effect:{type:"bonus"},    name:"Relic",  desc:"Shrinks +2 · big pts",      rare:true  },
+];
+const TOTAL_W = FOOD_TYPES.reduce((s,f)=>s+f.weight,0);
+function pickFood() { let r=Math.random()*TOTAL_W; for(const f of FOOD_TYPES){r-=f.weight;if(r<=0)return f;} return FOOD_TYPES[0]; }
+
+const BASE_SPEEDS=[180,150,120,95,75,60];
+const FOOD_PER_LVL=5;
+
+let snake,dir,nextDir,foods,score,level,foodEaten,foodStats;
+let tickTimer,gameRunning,gamePaused,startTime,elapsed;
+let activeEffect=null, effectTimer=null, animFrame;
+let userBest=0, userGames=0, hasSave=false;
+
+const rnd=n=>Math.floor(Math.random()*n);
+const initials=name=>(name||"?").split(" ").map(w=>w[0]).join("").toUpperCase().slice(0,2);
+function fmtTime(sec){const m=Math.floor(sec/60),s=sec%60;return`${m}:${s.toString().padStart(2,"0")}`;}
+
+function curSpeed(){
+  const b=BASE_SPEEDS[Math.min(level-1,BASE_SPEEDS.length-1)];
+  if(activeEffect?.type==="speed") return Math.round(b/2);
+  if(activeEffect?.type==="slow")  return Math.round(b*2);
+  return b;
+}
+
+function spawnFood(body,existing=[]){
+  const occ=new Set([...body.map(p=>`${p.x},${p.y}`),...existing.map(f=>`${f.x},${f.y}`)]);
+  let pos,t=0;
+  do{pos={x:rnd(COLS),y:rnd(ROWS)};t++;}while(occ.has(`${pos.x},${pos.y}`)&&t<300);
+  return{...pos,type:pickFood()};
+}
+
+function ensureFood(){
+  const target=score>200?2:1;
+  const hasRare=foods.some(f=>f.type.rare);
+  while(foods.length<target){
+    const c=spawnFood(snake,foods);
+    if(c.type.rare&&hasRare) c.type=FOOD_TYPES[0];
+    foods.push(c);
+  }
+}
+
+const BANNER={speed:{text:"↯ CHARGE",color:"#f5c842",bg:"#2a2010"},slow:{text:"❋ FROST",color:"#79aaff",bg:"#10182a"}};
+
+function showBanner(text,color,bg,dur){
+  const b=document.getElementById("effect-banner");
+  b.textContent=text; b.style.color=color; b.style.borderColor=color; b.style.background=bg;
+  b.classList.add("show"); clearTimeout(b._t); b._t=setTimeout(()=>b.classList.remove("show"),dur);
+}
+
+function applyEffect(eff){
+  if(!eff) return;
+  clearTimeout(effectTimer);
+  if(eff.type==="poison"){
+    if(snake.length<=3){endGame();return;}
+    snake.splice(snake.length-3);
+    showBanner("✕ POISON","#b44afb","#1a0a2a",1500); return;
+  }
+  if(eff.type==="bonus"){
+    if(snake.length>2) snake.splice(snake.length-2);
+    showBanner("◎ RELIC","#ff9f4a","#2a1800",1500); return;
+  }
+  activeEffect={type:eff.type,expiresAt:Date.now()+eff.dur};
+  clearTimeout(tickTimer);
+  if(gameRunning&&!gamePaused) tickTimer=setTimeout(tick,curSpeed());
+  const lb=BANNER[eff.type];
+  showBanner(lb.text,lb.color,lb.bg,eff.dur);
+  effectTimer=setTimeout(()=>{
+    activeEffect=null;
+    clearTimeout(tickTimer);
+    if(gameRunning&&!gamePaused) tickTimer=setTimeout(tick,curSpeed());
+  },eff.dur);
+}
+
+function initGame(fromSave=null){
+  clearTimeout(tickTimer); cancelAnimationFrame(animFrame);
+  if(fromSave){
+    snake=fromSave.snake; dir=fromSave.dir; nextDir=fromSave.dir;
+    foods=fromSave.foods||[]; score=fromSave.score; level=fromSave.level;
+    foodEaten=fromSave.foodEaten; elapsed=fromSave.elapsed||0; foodStats=fromSave.foodStats||{};
+  } else {
+    const cx=Math.floor(COLS/2),cy=Math.floor(ROWS/2);
+    snake=[{x:cx,y:cy},{x:cx-1,y:cy},{x:cx-2,y:cy}];
+    dir={x:1,y:0}; nextDir={x:1,y:0}; foods=[]; score=0; level=1; foodEaten=0; elapsed=0; foodStats={};
+  }
+  activeEffect=null; gamePaused=false; gameRunning=true;
+  startTime=Date.now()-elapsed*1000;
+  ensureFood();
+  document.getElementById("score-display").textContent=score;
+  document.getElementById("pause-overlay").classList.remove("show");
+  document.getElementById("effect-banner").classList.remove("show");
+  renderLegend(); drawLoop();
+  tickTimer=setTimeout(tick,curSpeed());
+}
+
+function drawLoop(){ draw(); if(gameRunning) animFrame=requestAnimationFrame(drawLoop); }
+
+function tick(){
+  if(!gameRunning||gamePaused) return;
+  dir={...nextDir};
+  const head={x:snake[0].x+dir.x,y:snake[0].y+dir.y};
+  if(head.x<0||head.x>=COLS||head.y<0||head.y>=ROWS){endGame();return;}
+  if(snake.slice(0,-1).some(s=>s.x===head.x&&s.y===head.y)){endGame();return;}
+
+  const ateIdx=foods.findIndex(f=>f.x===head.x&&f.y===head.y);
+  const ate=ateIdx!==-1;
+  snake.unshift(head);
+  if(!ate) snake.pop();
+
+  if(ate){
+    const food=foods[ateIdx];
+    const pts=food.type.pts(level);
+    score+=pts; foodEaten++;
+    const fs=foodStats[food.type.id]||{count:0,pts:0};
+    fs.count++; fs.pts+=pts; foodStats[food.type.id]=fs;
+    if(foodEaten%FOOD_PER_LVL===0) level=Math.min(level+1,BASE_SPEEDS.length);
+    document.getElementById("score-display").textContent=score;
+    foods.splice(ateIdx,1);
+    applyEffect(food.type.effect);
+    ensureFood();
+  }
+  tickTimer=setTimeout(tick,curSpeed());
+}
+
+function draw(){
+  ctx.fillStyle="#0b0c0f"; ctx.fillRect(0,0,W,H);
+  ctx.strokeStyle="#111318"; ctx.lineWidth=0.5;
+  for(let x=0;x<=COLS;x++){ctx.beginPath();ctx.moveTo(x*CELL,0);ctx.lineTo(x*CELL,H);ctx.stroke();}
+  for(let y=0;y<=ROWS;y++){ctx.beginPath();ctx.moveTo(0,y*CELL);ctx.lineTo(W,y*CELL);ctx.stroke();}
+
+  const now=Date.now();
+  foods.forEach(food=>{
+    const ft=food.type, pulse=0.5+0.5*Math.sin(now/180+food.x+food.y), pad=ft.rare?2+pulse*0.8:3+pulse*1;
+    if(ft.rare){ctx.shadowColor=ft.color;ctx.shadowBlur=8+pulse*4;}
+    ctx.fillStyle=ft.color; ctx.globalAlpha=0.12;
+    ctx.fillRect(food.x*CELL,food.y*CELL,CELL,CELL); ctx.globalAlpha=1;
+    ctx.fillStyle=ft.color;
+    ctx.beginPath(); ctx.roundRect(food.x*CELL+pad,food.y*CELL+pad,CELL-pad*2,CELL-pad*2,3); ctx.fill();
+    ctx.shadowBlur=0;
+    ctx.fillStyle="#0b0c0f"; ctx.font=`bold ${Math.round(CELL*0.52)}px 'Courier New'`;
+    ctx.textAlign="center"; ctx.textBaseline="middle";
+    ctx.fillText(ft.glyph,food.x*CELL+CELL/2,food.y*CELL+CELL/2+1);
+  });
+  ctx.textAlign="left"; ctx.textBaseline="alphabetic";
+
+  if(activeEffect){
+    const tints={speed:"rgba(245,200,66,0.03)",slow:"rgba(121,170,255,0.04)"};
+    ctx.fillStyle=tints[activeEffect.type]||"transparent"; ctx.fillRect(0,0,W,H);
+    const dur=activeEffect.type==="slow"?4000:3000;
+    const remain=Math.max(0,(activeEffect.expiresAt-now)/dur);
+    const bc=activeEffect.type==="speed"?"#f5c842":"#79aaff";
+    ctx.fillStyle="#1f2128"; ctx.fillRect(0,H-3,W,3);
+    ctx.fillStyle=bc; ctx.fillRect(0,H-3,W*remain,3);
+  }
+
+  snake.forEach((seg,i)=>{
+    const isHead=i===0;
+    let col;
+    if(activeEffect?.type==="speed") col=isHead?"#fff5a0":(i%2===0?"#f5c842":"#c8a020");
+    else if(activeEffect?.type==="slow") col=isHead?"#cce4ff":(i%2===0?"#79aaff":"#4a7acc");
+    else col=isHead?"#eef0f5":(i%2===0?"#c8fb4a":"#8fb82e");
+    ctx.fillStyle=col;
+    ctx.beginPath(); ctx.roundRect(seg.x*CELL+1,seg.y*CELL+1,CELL-2,CELL-2,isHead?4:2); ctx.fill();
+    if(isHead){
+      ctx.fillStyle="#0b0c0f";
+      const cx=seg.x*CELL+CELL/2, cy=seg.y*CELL+CELL/2;
+      if(dir.y===0){
+        ctx.beginPath();ctx.arc(cx+dir.x*2,cy-3,2,0,Math.PI*2);ctx.fill();
+        ctx.beginPath();ctx.arc(cx+dir.x*2,cy+3,2,0,Math.PI*2);ctx.fill();
+      } else {
+        ctx.beginPath();ctx.arc(cx-3,cy+dir.y*2,2,0,Math.PI*2);ctx.fill();
+        ctx.beginPath();ctx.arc(cx+3,cy+dir.y*2,2,0,Math.PI*2);ctx.fill();
+      }
+    }
+  });
+
+  ctx.fillStyle="#6b7080"; ctx.font="10px 'Courier New'"; ctx.textAlign="left"; ctx.textBaseline="alphabetic";
+  ctx.fillText(`LVL ${level}`,6,H-6);
+  const lt=`LEN ${snake.length}`; ctx.fillText(lt,W-ctx.measureText(lt).width-6,H-6);
+}
+
+function renderLegend(){
+  document.getElementById("food-legend").innerHTML=FOOD_TYPES.map(f=>
+    `<div class="legend-item"><div class="legend-dot" style="background:${f.color}"></div><span style="color:${f.color}">${f.glyph}</span><span>${f.name}</span></div>`
+  ).join("");
+}
+function renderFoodGuide(){
+  document.getElementById("food-guide").innerHTML=FOOD_TYPES.map(f=>
+    `<div class="food-row"><div class="food-sym" style="background:${f.color}22;border:1px solid ${f.color}55"><span style="color:${f.color};font-size:13px">${f.glyph}</span></div><div><div class="food-name" style="color:${f.color}">${f.name}</div><div class="food-desc">${f.desc}</div></div></div>`
+  ).join("");
+}
+
+async function endGame(){
+  gameRunning=false; clearTimeout(tickTimer); clearTimeout(effectTimer); cancelAnimationFrame(animFrame); activeEffect=null;
+  elapsed=Math.floor((Date.now()-startTime)/1000);
+  if(hasSave){await fetch(`${API}/save/${TG_USER.id}`,{method:"DELETE"});hasSave=false;}
+  const res=await apiPost("/score",{user_id:TG_USER.id,username:TG_USER.username,first_name:TG_USER.first_name,score,length:snake.length,duration:elapsed});
+  userGames++; if(score>userBest) userBest=score;
+  document.getElementById("over-score").textContent=score;
+  document.getElementById("over-meta").innerHTML=
+    `Length: <span>${snake.length}</span>&nbsp;·&nbsp;Time: <span>${fmtTime(elapsed)}</span>&nbsp;·&nbsp;Level: <span>${level}</span>`;
+  const eaten=FOOD_TYPES.filter(f=>foodStats[f.id]?.count);
+  document.getElementById("food-breakdown").innerHTML=eaten.length
+    ?eaten.map(f=>{const s=foodStats[f.id];return`<div class="breakdown-row"><div class="breakdown-left"><span style="color:${f.color}">${f.glyph} ${f.name}</span></div><div style="display:flex;gap:16px"><span style="color:var(--muted)">×${s.count}</span><span class="breakdown-val">+${s.pts}</span></div></div>`;}).join("")
+    :`<div style="font-size:11px;color:var(--muted);text-align:center;padding:4px 0">no food eaten</div>`;
+  document.getElementById("over-rank").textContent=res?.rank?`#${res.rank} on leaderboard`:"";
+  show("over");
+}
+
+async function saveGame(){
+  await apiPost("/save",{user_id:TG_USER.id,state:{snake,dir,foods,score,level,foodEaten,foodStats,elapsed:Math.floor((Date.now()-startTime)/1000)}});
+  hasSave=true;
+}
+async function continueGame(){
+  const data=await apiGet(`/save/${TG_USER.id}`);
+  if(!data?.save){startNewGame();return;}
+  initGame(data.save); show("game");
+}
+function startNewGame(){
+  if(hasSave) fetch(`${API}/save/${TG_USER.id}`,{method:"DELETE"});
+  hasSave=false; initGame(); show("game");
+}
+
+async function apiPost(path,body){try{const r=await fetch(API+path,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(body)});return await r.json();}catch{return null;}}
+async function apiGet(path){try{const r=await fetch(API+path);if(!r.ok)return null;return await r.json();}catch{return null;}}
+
+async function initUser(){
+  await apiPost("/user",{user_id:TG_USER.id,username:TG_USER.username,first_name:TG_USER.first_name});
+  const data=await apiGet(`/user/${TG_USER.id}`);
+  if(data){userBest=data.best_score||0;userGames=data.games||0;}
+  updateHomeUI();
+  const sd=await apiGet(`/save/${TG_USER.id}`);
+  hasSave=!!(sd?.save);
+  document.getElementById("btn-continue").style.display=hasSave?"block":"none";
+}
+function updateHomeUI(){
+  const name=TG_USER.first_name||"Player";
+  document.getElementById("home-name").textContent=name;
+  document.getElementById("home-avatar").textContent=initials(name);
+  document.getElementById("home-best").textContent=userBest||"—";
+  document.getElementById("home-games").textContent=userGames||"0";
+}
+
+async function loadLeaderboard(){
+  const list=document.getElementById("board-list");
+  list.innerHTML='<div class="board-empty">Loading...</div>';
+  const data=await apiGet("/leaderboard?limit=50");
+  if(!data?.leaderboard?.length){list.innerHTML='<div class="board-empty">No scores yet</div>';return;}
+  const rc=i=>i===0?"gold":i===1?"silver":i===2?"bronze":"";
+  const rs=i=>i===0?"①":i===1?"②":i===2?"③":`${i+1}`;
+  list.innerHTML=data.leaderboard.map((u,i)=>`
+    <div class="board-row ${u.user_id===TG_USER.id?"me":""}">
+      <div class="board-rank ${rc(i)}">${rs(i)}</div>
+      <div class="board-av">${initials(u.first_name)}</div>
+      <div class="board-name">${u.first_name||"Player"}${u.user_id===TG_USER.id?" ← you":""}</div>
+      <div class="board-score">${u.best_score}</div>
+    </div>`).join("");
+}
+
+function show(id){document.querySelectorAll(".screen").forEach(s=>s.classList.remove("active"));document.getElementById(id).classList.add("active");}
+const DIRS={UP:{x:0,y:-1},DOWN:{x:0,y:1},LEFT:{x:-1,y:0},RIGHT:{x:1,y:0}};
+function setDir(d){if(d.x===-dir.x&&d.y===-dir.y)return;nextDir=d;}
+
+document.querySelectorAll(".dpad-btn").forEach(btn=>btn.addEventListener("pointerdown",e=>{e.preventDefault();setDir(DIRS[btn.dataset.dir]);}));
+document.addEventListener("keydown",e=>{
+  const m={ArrowUp:"UP",ArrowDown:"DOWN",ArrowLeft:"LEFT",ArrowRight:"RIGHT",w:"UP",s:"DOWN",a:"LEFT",d:"RIGHT"};
+  if(m[e.key]){e.preventDefault();setDir(DIRS[m[e.key]]);}
+  if(e.key==="Escape"||e.key==="p") togglePause();
+});
+let touchStart=null;
+canvas.addEventListener("touchstart",e=>{touchStart={x:e.touches[0].clientX,y:e.touches[0].clientY};},{passive:true});
+canvas.addEventListener("touchend",e=>{
+  if(!touchStart)return;
+  const dx=e.changedTouches[0].clientX-touchStart.x, dy=e.changedTouches[0].clientY-touchStart.y;
+  if(Math.abs(dx)>Math.abs(dy)) setDir(dx>0?DIRS.RIGHT:DIRS.LEFT); else setDir(dy>0?DIRS.DOWN:DIRS.UP);
+  touchStart=null;
+},{passive:true});
+
+function togglePause(){
+  if(!gameRunning)return;
+  gamePaused=!gamePaused;
+  document.getElementById("pause-overlay").classList.toggle("show",gamePaused);
+  if(!gamePaused){tickTimer=setTimeout(tick,curSpeed());drawLoop();}
+  else{clearTimeout(tickTimer);cancelAnimationFrame(animFrame);}
+}
+
+document.getElementById("pause-btn").onclick=togglePause;
+document.getElementById("btn-resume").onclick=togglePause;
+document.getElementById("btn-quit").onclick=async()=>{
+  clearTimeout(tickTimer);cancelAnimationFrame(animFrame);gameRunning=false;
+  await saveGame();
+  document.getElementById("btn-continue").style.display="block";
+  updateHomeUI();show("home");
+};
+document.getElementById("btn-new").onclick=startNewGame;
+document.getElementById("btn-continue").onclick=continueGame;
+document.getElementById("btn-board-home").onclick=()=>{loadLeaderboard();show("board");};
+document.getElementById("btn-retry").onclick=startNewGame;
+document.getElementById("btn-over-board").onclick=()=>{loadLeaderboard();show("board");};
+document.getElementById("btn-over-home").onclick=()=>{updateHomeUI();show("home");};
+document.getElementById("board-refresh").onclick=loadLeaderboard;
+document.getElementById("nav-home").onclick=()=>{updateHomeUI();show("home");};
+document.getElementById("nav-play").onclick=startNewGame;
+
+renderFoodGuide();
+initUser();
+</script>
+</body>
+</html>

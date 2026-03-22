@@ -1,0 +1,47 @@
+version: "3.9"
+
+services:
+  backend:
+    build: ./backend
+    container_name: snake_backend
+    restart: unless-stopped
+    env_file:
+      - path: .env
+        required: false
+    environment:
+      - DB_PATH=${DB_PATH:-/data/snake.db}
+    volumes:
+      - snake_data:/data
+    ports:
+      - "${BACKEND_PORT:-8000}:8000"
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+
+  frontend:
+    build: ./frontend
+    container_name: snake_frontend
+    restart: unless-stopped
+    ports:
+      - "${FRONTEND_PORT:-80}:80"
+    depends_on:
+      backend:
+        condition: service_healthy
+
+  bot:
+    build: ./bot
+    container_name: snake_bot
+    restart: unless-stopped
+    env_file:
+      - path: .env
+        required: false
+    environment:
+      - BOT_TOKEN=${BOT_TOKEN}
+      - WEBAPP_URL=${WEBAPP_URL}
+    depends_on:
+      - backend
+
+volumes:
+  snake_data:
