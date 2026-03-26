@@ -101,7 +101,7 @@ canvas { display:block; image-rendering:pixelated; }
 
   <div id="home" class="screen active">
     <div class="home-logo">SN▓KE</div>
-    <div class="home-sub">v2.0 · online</div>
+    <div class="home-sub">v2.1 · online</div>
     <div class="profile-card">
       <div class="avatar" id="home-avatar">?</div>
       <div class="profile-info">
@@ -172,387 +172,605 @@ canvas { display:block; image-rendering:pixelated; }
 
 </div>
 <script>
+// ── Telegram init ─────────────────────────────────────────────────────────────
 const tg = window.Telegram?.WebApp;
 if (tg) { tg.ready(); tg.expand(); }
-const TG_USER = tg?.initDataUnsafe?.user || { id: 100000 + Math.floor(Math.random()*900000), first_name:"Player", username:null };
+const TG_USER = tg?.initDataUnsafe?.user || {
+  id: 100000 + Math.floor(Math.random()*900000),
+  first_name: "Player", username: null
+};
 const API = "/api";
 
+// ── Canvas ────────────────────────────────────────────────────────────────────
 const CELL=18, COLS=20, ROWS=20, W=COLS*CELL, H=ROWS*CELL;
-const canvas=document.getElementById("canvas"), ctx=canvas.getContext("2d");
-canvas.width=W; canvas.height=H;
+const canvas = document.getElementById("canvas");
+const ctx    = canvas.getContext("2d");
+canvas.width  = W;
+canvas.height = H;
 
 // ── Food catalog ──────────────────────────────────────────────────────────────
 const FOOD_TYPES = [
   { id:"berry",  glyph:"◉", color:"#fb4a6e", weight:55, pts:l=>l*10,  effect:null,              name:"Berry",  desc:"Standard · +score",        rare:false },
   { id:"gem",    glyph:"◆", color:"#4afbc8", weight:8,  pts:l=>l*40,  effect:null,              name:"Gem",    desc:"Rare · big bonus",          rare:true  },
-  { id:"bolt",   glyph:"↯", color:"#f5c842", weight:14, pts:l=>l*8,   effect:{type:"speed",dur:3000}, name:"Charge", desc:"Speed ×2 · 3 sec",    rare:false },
-  { id:"frost",  glyph:"❋", color:"#79aaff", weight:12, pts:l=>l*15,  effect:{type:"slow", dur:4000}, name:"Frost",  desc:"Slow motion · 4 sec", rare:false },
+  { id:"bolt",   glyph:"↯", color:"#f5c842", weight:14, pts:l=>l*8,   effect:{type:"speed",dur:3000}, name:"Charge", desc:"Speed ×2 · 3 sec",  rare:false },
+  { id:"frost",  glyph:"❋", color:"#79aaff", weight:12, pts:l=>l*15,  effect:{type:"slow", dur:4000}, name:"Frost",  desc:"Slow motion · 4 sec",rare:false },
   { id:"poison", glyph:"✕", color:"#b44afb", weight:6,  pts:l=>0,     effect:{type:"poison"},   name:"Poison", desc:"Shrinks −3 or game over",   rare:false },
   { id:"relic",  glyph:"◎", color:"#ff9f4a", weight:5,  pts:l=>l*25,  effect:{type:"bonus"},    name:"Relic",  desc:"Shrinks +2 · big pts",      rare:true  },
 ];
-const TOTAL_W = FOOD_TYPES.reduce((s,f)=>s+f.weight,0);
-function pickFood() { let r=Math.random()*TOTAL_W; for(const f of FOOD_TYPES){r-=f.weight;if(r<=0)return f;} return FOOD_TYPES[0]; }
+const TOTAL_W = FOOD_TYPES.reduce((s,f)=>s+f.weight, 0);
+function pickFood() {
+  let r = Math.random() * TOTAL_W;
+  for (const f of FOOD_TYPES) { r -= f.weight; if (r <= 0) return f; }
+  return FOOD_TYPES[0];
+}
 
-const BASE_SPEEDS=[180,150,120,95,75,60];
-const FOOD_PER_LVL=5;
+const BASE_SPEEDS   = [180, 150, 120, 95, 75, 60];
+const FOOD_PER_LVL  = 5;
 
-let snake,dir,nextDir,dirQueue,foods,score,level,foodEaten,foodStats;
-let tickTimer,gameRunning,gamePaused,startTime,elapsed;
+// ── Game state ────────────────────────────────────────────────────────────────
+let snake, dir, nextDir, dirQueue, foods = [], score, level, foodEaten, foodStats;
+let tickTimer, gameRunning, gamePaused, startTime, elapsed;
 let activeEffect=null, effectTimer=null, animFrame;
 let userBest=0, userGames=0, hasSave=false;
-// ── smooth movement ───────────────────────────────────────────────────────────
+// smooth interpolation
 let prevSnake=[], lastTickTime=0, tickDuration=180;
-let targetSpeed=180, currentSpeed_=180; // for smooth speed transitions
+// fx
+let newBestAchieved=false, particles=[];
 
-const rnd=n=>Math.floor(Math.random()*n);
-const initials=name=>(name||"?").split(" ").map(w=>w[0]).join("").toUpperCase().slice(0,2);
-function fmtTime(sec){const m=Math.floor(sec/60),s=sec%60;return`${m}:${s.toString().padStart(2,"0")}`;}
+// ── Helpers ───────────────────────────────────────────────────────────────────
+const rnd = n => Math.floor(Math.random() * n);
+const fmtTime = sec => {
+  const m = Math.floor(sec/60), s = sec % 60;
+  return `${m}:${s.toString().padStart(2,"0")}`;
+};
 
-function curSpeed(){
-  const b=BASE_SPEEDS[Math.min(level-1,BASE_SPEEDS.length-1)];
-  if(activeEffect?.type==="speed") return Math.max(55, Math.round(b/1.5));
-  if(activeEffect?.type==="slow")  return Math.round(b*1.5);
+function curSpeed() {
+  const b = BASE_SPEEDS[Math.min(level-1, BASE_SPEEDS.length-1)];
+  if (activeEffect?.type === "speed") return Math.max(55, Math.round(b/1.5));
+  if (activeEffect?.type === "slow")  return Math.round(b*1.5);
   return b;
 }
 
-function spawnFood(body,existing=[]){
-  const occ=new Set([...body.map(p=>`${p.x},${p.y}`),...existing.map(f=>`${f.x},${f.y}`)]);
-  let pos,t=0;
-  do{pos={x:rnd(COLS),y:rnd(ROWS)};t++;}while(occ.has(`${pos.x},${pos.y}`)&&t<300);
-  const type=pickFood();
-  // each food lives 4–8 sec depending on type
-  const lifetimes={ berry:7000, gem:5000, bolt:5500, frost:6000, poison:4000, relic:4500 };
-  const lifetime = lifetimes[type.id] || 6000;
-  return{ ...pos, type, spawnedAt:Date.now(), lifetime };
+// ── Food spawning (per-food timers — fixes the global-timer bug) ──────────────
+function clearAllFoodTimers() {
+  foods.forEach(f => { if (f.timerId) clearTimeout(f.timerId); });
 }
 
-let foodExpireTimer=null;
-
-function scheduleNextFood(delay=800){
-  clearTimeout(foodExpireTimer);
-  foodExpireTimer=setTimeout(()=>{
-    if(!gameRunning||gamePaused) return;
-    // remove expired foods
-    foods=foods.filter(f=>Date.now()<f.spawnedAt+f.lifetime);
-    // spawn new one if field is empty
-    if(foods.length===0) spawnOneFood();
-  }, delay);
+function spawnFood(body, existing=[]) {
+  const occ = new Set([
+    ...body.map(p => `${p.x},${p.y}`),
+    ...existing.map(f => `${f.x},${f.y}`)
+  ]);
+  let pos, t=0;
+  do { pos = {x:rnd(COLS), y:rnd(ROWS)}; t++; }
+  while (occ.has(`${pos.x},${pos.y}`) && t < 300);
+  const type     = pickFood();
+  const lifetimes = { berry:7000, gem:5000, bolt:5500, frost:6000, poison:4000, relic:4500 };
+  return { ...pos, type, spawnedAt: Date.now(), lifetime: lifetimes[type.id] || 6000 };
 }
 
-function spawnOneFood(){
-  if(!gameRunning) return;
-  const f=spawnFood(snake, foods);
-  foods.push(f);
-  // schedule its auto-expiry
-  clearTimeout(foodExpireTimer);
-  foodExpireTimer=setTimeout(()=>{
-    if(!gameRunning) return;
-    foods=foods.filter(x=>x!==f);
-    // small pause then spawn next
-    setTimeout(()=>{ if(gameRunning&&!gamePaused&&foods.length===0) spawnOneFood(); }, 600);
+function spawnOneFood() {
+  if (!gameRunning) return;
+  const f = spawnFood(snake, foods);
+  // each food owns its own expiry timer
+  f.timerId = setTimeout(() => {
+    if (!gameRunning) return;
+    foods = foods.filter(x => x !== f);
+    if (gameRunning && !gamePaused && foods.length === 0) {
+      setTimeout(() => { if (gameRunning && !gamePaused) spawnOneFood(); }, 600);
+    }
   }, f.lifetime);
+  foods.push(f);
 }
 
-function ensureFood(){
-  if(foods.length===0) spawnOneFood();
+function ensureFood() {
+  if (foods.length === 0) spawnOneFood();
 }
 
-const BANNER={speed:{text:"↯ CHARGE",color:"#f5c842",bg:"#2a2010"},slow:{text:"❋ FROST",color:"#79aaff",bg:"#10182a"}};
+// ── Banner ────────────────────────────────────────────────────────────────────
+const BANNER = {
+  speed:  { text:"↯ CHARGE", color:"#f5c842", bg:"#2a2010" },
+  slow:   { text:"❋ FROST",  color:"#79aaff", bg:"#10182a" }
+};
 
-function showBanner(text,color,bg,dur){
-  const b=document.getElementById("effect-banner");
+function showBanner(text, color, bg, dur) {
+  const b = document.getElementById("effect-banner");
   b.textContent=text; b.style.color=color; b.style.borderColor=color; b.style.background=bg;
-  b.classList.add("show"); clearTimeout(b._t); b._t=setTimeout(()=>b.classList.remove("show"),dur);
+  b.classList.add("show");
+  clearTimeout(b._t);
+  b._t = setTimeout(() => b.classList.remove("show"), dur);
 }
 
-function applyEffect(eff){
-  if(!eff) return;
+// ── Effects ───────────────────────────────────────────────────────────────────
+function applyEffect(eff) {
+  if (!eff) return;
   clearTimeout(effectTimer);
-  if(eff.type==="poison"){
-    if(snake.length<=3){endGame();return;}
-    snake.splice(snake.length-3);
-    showBanner("✕ POISON","#b44afb","#1a0a2a",1500); return;
+  if (eff.type === "poison") {
+    if (snake.length <= 3) { endGame(); return; }
+    snake.splice(snake.length - 3);
+    showBanner("✕ POISON", "#b44afb", "#1a0a2a", 1500);
+    return;
   }
-  if(eff.type==="bonus"){
-    if(snake.length>2) snake.splice(snake.length-2);
-    showBanner("◎ RELIC","#ff9f4a","#2a1800",1500); return;
+  if (eff.type === "bonus") {
+    if (snake.length > 2) snake.splice(snake.length - 2);
+    showBanner("◎ RELIC", "#ff9f4a", "#2a1800", 1500);
+    return;
   }
-  activeEffect={type:eff.type,expiresAt:Date.now()+eff.dur};
+  activeEffect = { type: eff.type, expiresAt: Date.now() + eff.dur };
   clearTimeout(tickTimer);
-  if(gameRunning&&!gamePaused) tickTimer=setTimeout(tick,curSpeed());
-  const lb=BANNER[eff.type];
-  showBanner(lb.text,lb.color,lb.bg,eff.dur);
-  effectTimer=setTimeout(()=>{
-    activeEffect=null;
+  if (gameRunning && !gamePaused) tickTimer = setTimeout(tick, curSpeed());
+  const lb = BANNER[eff.type];
+  showBanner(lb.text, lb.color, lb.bg, eff.dur);
+  effectTimer = setTimeout(() => {
+    activeEffect = null;
     clearTimeout(tickTimer);
-    if(gameRunning&&!gamePaused) tickTimer=setTimeout(tick,curSpeed());
-  },eff.dur);
+    if (gameRunning && !gamePaused) tickTimer = setTimeout(tick, curSpeed());
+  }, eff.dur);
 }
 
-function initGame(fromSave=null){
-  clearTimeout(tickTimer); cancelAnimationFrame(animFrame);
-  if(fromSave){
-    snake=fromSave.snake; dir=fromSave.dir; nextDir=fromSave.dir; dirQueue=[];
-    foods=fromSave.foods||[]; score=fromSave.score; level=fromSave.level;
-    foodEaten=fromSave.foodEaten; elapsed=fromSave.elapsed||0; foodStats=fromSave.foodStats||{};
+// ── Init game ─────────────────────────────────────────────────────────────────
+function initGame(fromSave=null) {
+  clearTimeout(tickTimer);
+  cancelAnimationFrame(animFrame);
+  clearAllFoodTimers();
+
+  // reset fx
+  newBestAchieved = false;
+  particles       = [];
+
+  if (fromSave) {
+    snake      = fromSave.snake;
+    dir        = fromSave.dir;
+    nextDir    = fromSave.dir;
+    dirQueue   = [];
+    score      = fromSave.score;
+    level      = fromSave.level;
+    foodEaten  = fromSave.foodEaten;
+    elapsed    = fromSave.elapsed || 0;
+    foodStats  = fromSave.foodStats || {};
+
+    // Restore foods: skip any that already expired, re-schedule timers
+    const now_ = Date.now();
+    foods = (fromSave.foods || []).filter(f => now_ < f.spawnedAt + f.lifetime);
+    foods.forEach(f => {
+      const remaining = Math.max(500, f.lifetime - (now_ - f.spawnedAt));
+      f.timerId = setTimeout(() => {
+        if (!gameRunning) return;
+        foods = foods.filter(x => x !== f);
+        if (gameRunning && !gamePaused && foods.length === 0) {
+          setTimeout(() => { if (gameRunning && !gamePaused) spawnOneFood(); }, 600);
+        }
+      }, remaining);
+    });
   } else {
-    const cx=Math.floor(COLS/2),cy=Math.floor(ROWS/2);
-    snake=[{x:cx,y:cy},{x:cx-1,y:cy},{x:cx-2,y:cy}];
-    dir={x:1,y:0}; nextDir={x:1,y:0}; dirQueue=[]; foods=[]; score=0; level=1; foodEaten=0; elapsed=0; foodStats={};
+    const cx = Math.floor(COLS/2), cy = Math.floor(ROWS/2);
+    snake      = [{x:cx,y:cy},{x:cx-1,y:cy},{x:cx-2,y:cy}];
+    dir        = {x:1,y:0};
+    nextDir    = {x:1,y:0};
+    dirQueue   = [];
+    foods      = [];
+    score      = 0;
+    level      = 1;
+    foodEaten  = 0;
+    elapsed    = 0;
+    foodStats  = {};
   }
-  activeEffect=null; gamePaused=false; gameRunning=true;
-  startTime=Date.now()-elapsed*1000;
-  prevSnake=[...snake.map(s=>({...s}))];
-  lastTickTime=Date.now(); tickDuration=curSpeed();
-  ensureFood();
-  document.getElementById("score-display").textContent=score;
-  document.getElementById("pause-overlay").classList.remove("show");
-  document.getElementById("effect-banner").classList.remove("show");
-  renderLegend(); drawLoop();
-  tickTimer=setTimeout(tick,curSpeed());
-}
 
-function drawLoop(){ draw(); if(gameRunning) animFrame=requestAnimationFrame(drawLoop); }
-
-function tick(){
-  if(!gameRunning||gamePaused) return;
-  prevSnake = snake.map(s=>({...s}));
+  activeEffect = null;
+  gamePaused   = false;
+  gameRunning  = true;
+  startTime    = Date.now() - elapsed * 1000;
+  prevSnake    = snake.map(s => ({...s}));
   lastTickTime = Date.now();
   tickDuration = curSpeed();
 
-  // pick best direction from queue — skip ones that lead to instant death
-  const head = snake[0];
-  let chosen = dir; // fallback: keep going
-
-  if(dirQueue.length>0){
-    // try each queued dir in order, use first that doesn't immediately kill
-    let usedIdx = 0;
-    for(let i=0;i<dirQueue.length;i++){
-      const d = dirQueue[i];
-      const nx = head.x+d.x, ny = head.y+d.y;
-      const wallDeath = nx<0||nx>=COLS||ny<0||ny>=ROWS;
-      const selfDeath = snake.slice(0,-1).some(s=>s.x===nx&&s.y===ny);
-      if(!wallDeath && !selfDeath){ chosen=d; usedIdx=i; break; }
-      // if this dir kills but current dir also kills — accept it anyway (die trying)
-      const cx=head.x+dir.x, cy=head.y+dir.y;
-      const curWall=cx<0||cx>=COLS||cy<0||cy>=ROWS;
-      const curSelf=snake.slice(0,-1).some(s=>s.x===cx&&s.y===cy);
-      if(curWall||curSelf){ chosen=d; usedIdx=i; break; }
-    }
-    dirQueue.splice(0, usedIdx+1); // consume up to and including chosen
-  }
-
-  dir = {...chosen};
-  nextDir = {...dir};
-
-  const nx = head.x+dir.x, ny = head.y+dir.y;
-  if(nx<0||nx>=COLS||ny<0||ny>=ROWS){endGame();return;}
-  if(snake.slice(0,-1).some(s=>s.x===nx&&s.y===ny)){endGame();return;}
-
-  const newHead={x:nx,y:ny};
-  const ateIdx=foods.findIndex(f=>f.x===newHead.x&&f.y===newHead.y);
-  const ate=ateIdx!==-1;
-  snake.unshift(newHead);
-  if(!ate) snake.pop();
-
-  if(ate){
-    const food=foods[ateIdx];
-    const pts=food.type.pts(level);
-    score+=pts; foodEaten++;
-    const fs=foodStats[food.type.id]||{count:0,pts:0};
-    fs.count++; fs.pts+=pts; foodStats[food.type.id]=fs;
-    if(foodEaten%FOOD_PER_LVL===0) level=Math.min(level+1,BASE_SPEEDS.length);
-    document.getElementById("score-display").textContent=score;
-    foods.splice(ateIdx,1);
-    clearTimeout(foodExpireTimer);
-    applyEffect(food.type.effect);
-    // short pause before next food appears
-    setTimeout(()=>{ if(gameRunning&&!gamePaused&&foods.length===0) spawnOneFood(); }, 500);
-  }
-  tickTimer=setTimeout(tick,curSpeed());
+  ensureFood();
+  document.getElementById("score-display").textContent = score;
+  document.getElementById("pause-overlay").classList.remove("show");
+  document.getElementById("effect-banner").classList.remove("show");
+  renderLegend();
+  drawLoop();
+  tickTimer = setTimeout(tick, curSpeed());
 }
 
-function draw(){
-  ctx.fillStyle="#0b0c0f"; ctx.fillRect(0,0,W,H);
-  ctx.strokeStyle="#111318"; ctx.lineWidth=0.5;
-  for(let x=0;x<=COLS;x++){ctx.beginPath();ctx.moveTo(x*CELL,0);ctx.lineTo(x*CELL,H);ctx.stroke();}
-  for(let y=0;y<=ROWS;y++){ctx.beginPath();ctx.moveTo(0,y*CELL);ctx.lineTo(W,y*CELL);ctx.stroke();}
+function drawLoop() {
+  draw();
+  if (gameRunning) animFrame = requestAnimationFrame(drawLoop);
+}
 
-  const now=Date.now();
+// ── Tick ──────────────────────────────────────────────────────────────────────
+function tick() {
+  if (!gameRunning || gamePaused) return;
+  prevSnake    = snake.map(s => ({...s}));
+  lastTickTime = Date.now();
+  tickDuration = curSpeed();
 
-  // interpolation factor 0→1 between last tick and next tick
-  const t = tickDuration>0 ? Math.min(1,(now-lastTickTime)/tickDuration) : 1;
-  // easing: smoothstep makes it feel less mechanical
+  const head = snake[0];
+  let chosen = dir;   // fallback: keep going
+
+  if (dirQueue.length > 0) {
+    let usedIdx = 0;
+    for (let i = 0; i < dirQueue.length; i++) {
+      const d  = dirQueue[i];
+      const nx = head.x + d.x, ny = head.y + d.y;
+      const wallDeath = nx < 0 || nx >= COLS || ny < 0 || ny >= ROWS;
+      const selfDeath = snake.slice(0, -1).some(s => s.x===nx && s.y===ny);
+      if (!wallDeath && !selfDeath) { chosen = d; usedIdx = i; break; }
+      // if current dir also kills, accept the queued one anyway
+      const cx = head.x + dir.x, cy = head.y + dir.y;
+      const curWall = cx<0 || cx>=COLS || cy<0 || cy>=ROWS;
+      const curSelf = snake.slice(0,-1).some(s => s.x===cx && s.y===cy);
+      if (curWall || curSelf) { chosen = d; usedIdx = i; break; }
+    }
+    dirQueue.splice(0, usedIdx + 1);
+  }
+
+  dir     = {...chosen};
+  nextDir = {...dir};
+
+  const nx = head.x + dir.x, ny = head.y + dir.y;
+  if (nx<0 || nx>=COLS || ny<0 || ny>=ROWS) { endGame(); return; }
+  if (snake.slice(0,-1).some(s => s.x===nx && s.y===ny)) { endGame(); return; }
+
+  const newHead = {x:nx, y:ny};
+  const ateIdx  = foods.findIndex(f => f.x===newHead.x && f.y===newHead.y);
+  const ate     = ateIdx !== -1;
+
+  snake.unshift(newHead);
+  if (!ate) snake.pop();
+
+  if (ate) {
+    const food = foods[ateIdx];
+    clearTimeout(food.timerId);   // cancel this food's own expiry timer
+
+    const pts = food.type.pts(level);
+    score += pts;
+    foodEaten++;
+
+    if (score > userBest) newBestAchieved = true;
+
+    const fs = foodStats[food.type.id] || {count:0, pts:0};
+    fs.count++;
+    fs.pts += pts;
+    foodStats[food.type.id] = fs;
+
+    if (foodEaten % FOOD_PER_LVL === 0) level = Math.min(level+1, BASE_SPEEDS.length);
+    document.getElementById("score-display").textContent = score;
+
+    foods.splice(ateIdx, 1);
+
+    // spawn eat particles
+    for (let i = 0; i < 7; i++) {
+      particles.push({
+        x:    newHead.x * CELL + CELL/2,
+        y:    newHead.y * CELL + CELL/2,
+        vx:   (Math.random() - 0.5) * 3.5,
+        vy:   (Math.random() - 0.5) * 3.5,
+        life: 1.0,
+        color: food.type.color
+      });
+    }
+
+    applyEffect(food.type.effect);
+    setTimeout(() => { if (gameRunning && !gamePaused && foods.length===0) spawnOneFood(); }, 500);
+  }
+
+  tickTimer = setTimeout(tick, curSpeed());
+}
+
+// ── Draw ──────────────────────────────────────────────────────────────────────
+function draw() {
+  const now = Date.now();
+
+  ctx.fillStyle = "#0b0c0f";
+  ctx.fillRect(0, 0, W, H);
+
+  // Grid
+  ctx.strokeStyle = "#111318"; ctx.lineWidth = 0.5;
+  for (let x=0; x<=COLS; x++) { ctx.beginPath(); ctx.moveTo(x*CELL,0); ctx.lineTo(x*CELL,H); ctx.stroke(); }
+  for (let y=0; y<=ROWS; y++) { ctx.beginPath(); ctx.moveTo(0,y*CELL); ctx.lineTo(W,y*CELL); ctx.stroke(); }
+
+  // Interpolation factor
+  const t    = tickDuration > 0 ? Math.min(1, (now - lastTickTime) / tickDuration) : 1;
   const ease = t*t*(3-2*t);
-
-  // interpolated positions
-  function lerp(a,b,t){ return a+(b-a)*t; }
-  function ipos(i){
-    const cur=snake[i];
-    if(!prevSnake[i]) return cur;
-    const prev=prevSnake[i];
+  function lerp(a, b, t) { return a + (b-a)*t; }
+  function ipos(i) {
+    const cur = snake[i];
+    if (!prevSnake[i]) return cur;
+    const prev = prevSnake[i];
     return { x: lerp(prev.x, cur.x, ease), y: lerp(prev.y, cur.y, ease) };
   }
 
-  foods.forEach(food=>{
-    const ft=food.type;
-    const age=now-food.spawnedAt;
-    const timeLeft=food.lifetime-age;
-    const pulse=0.5+0.5*Math.sin(now/180+food.x+food.y);
-    const pad=ft.rare?2+pulse*0.8:3+pulse*1;
+  // Foods
+  foods.forEach(food => {
+    const ft       = food.type;
+    const age      = now - food.spawnedAt;
+    const timeLeft = food.lifetime - age;
+    const pulse    = 0.5 + 0.5 * Math.sin(now/180 + food.x + food.y);
+    const pad      = ft.rare ? 2 + pulse*0.8 : 3 + pulse*1;
 
-    // blink when < 2s left — faster as time runs out
-    let alpha=1;
-    if(timeLeft<2000){
-      const blinkRate=timeLeft<800?150:300;
-      alpha=Math.sin(now/blinkRate)>0?1:0.25;
+    // blink when < 3 sec remaining — speed increases as time runs out
+    let alpha = 1;
+    if (timeLeft < 3000) {
+      const blinkRate = timeLeft < 600 ? 80 : timeLeft < 1200 ? 150 : timeLeft < 2000 ? 250 : 400;
+      alpha = Math.sin(now / blinkRate) > 0 ? 1 : 0.2;
     }
 
-    ctx.globalAlpha=alpha;
-    if(ft.rare){ctx.shadowColor=ft.color;ctx.shadowBlur=8+pulse*4;}
-    ctx.fillStyle=ft.color; ctx.globalAlpha=alpha*0.12;
-    ctx.fillRect(food.x*CELL,food.y*CELL,CELL,CELL);
-    ctx.globalAlpha=alpha;
-    ctx.fillStyle=ft.color;
-    ctx.beginPath(); ctx.roundRect(food.x*CELL+pad,food.y*CELL+pad,CELL-pad*2,CELL-pad*2,3); ctx.fill();
-    ctx.shadowBlur=0;
-    ctx.fillStyle="#0b0c0f"; ctx.font=`bold ${Math.round(CELL*0.52)}px 'Courier New'`;
-    ctx.textAlign="center"; ctx.textBaseline="middle";
-    ctx.fillText(ft.glyph,food.x*CELL+CELL/2,food.y*CELL+CELL/2+1);
-    ctx.globalAlpha=1;
+    ctx.globalAlpha = alpha;
+    if (ft.rare) { ctx.shadowColor = ft.color; ctx.shadowBlur = 8 + pulse*4; }
+    ctx.fillStyle   = ft.color;
+    ctx.globalAlpha = alpha * 0.12;
+    ctx.fillRect(food.x*CELL, food.y*CELL, CELL, CELL);
+    ctx.globalAlpha = alpha;
+    ctx.fillStyle   = ft.color;
+    ctx.beginPath();
+    ctx.roundRect(food.x*CELL+pad, food.y*CELL+pad, CELL-pad*2, CELL-pad*2, 3);
+    ctx.fill();
+    ctx.shadowBlur  = 0;
+    ctx.fillStyle   = "#0b0c0f";
+    ctx.font        = `bold ${Math.round(CELL*0.52)}px 'Courier New'`;
+    ctx.textAlign   = "center";
+    ctx.textBaseline = "middle";
+    ctx.fillText(ft.glyph, food.x*CELL+CELL/2, food.y*CELL+CELL/2+1);
+    ctx.globalAlpha = 1;
   });
-  ctx.textAlign="left"; ctx.textBaseline="alphabetic";
+  ctx.textAlign    = "left";
+  ctx.textBaseline = "alphabetic";
 
-  if(activeEffect){
-    const tints={speed:"rgba(245,200,66,0.03)",slow:"rgba(121,170,255,0.05)"};
-    ctx.fillStyle=tints[activeEffect.type]||"transparent"; ctx.fillRect(0,0,W,H);
-    const dur=activeEffect.type==="slow"?4000:3000;
-    const remain=Math.max(0,(activeEffect.expiresAt-now)/dur);
-    const bc=activeEffect.type==="speed"?"#f5c842":"#79aaff";
-    ctx.fillStyle="#1f2128"; ctx.fillRect(0,H-3,W,3);
-    ctx.fillStyle=bc; ctx.fillRect(0,H-3,W*remain,3);
+  // Effect tint + progress bar
+  if (activeEffect) {
+    const tints = { speed:"rgba(245,200,66,0.03)", slow:"rgba(121,170,255,0.05)" };
+    ctx.fillStyle = tints[activeEffect.type] || "transparent";
+    ctx.fillRect(0, 0, W, H);
+    const dur     = activeEffect.type === "slow" ? 4000 : 3000;
+    const remain  = Math.max(0, (activeEffect.expiresAt - now) / dur);
+    const bc      = activeEffect.type === "speed" ? "#f5c842" : "#79aaff";
+    ctx.fillStyle = "#1f2128"; ctx.fillRect(0, H-3, W, 3);
+    ctx.fillStyle = bc;        ctx.fillRect(0, H-3, W*remain, 3);
   }
 
-  // draw snake body with interpolated positions (tail→head so head is on top)
-  for(let i=snake.length-1;i>=0;i--){
-    const isHead=i===0;
-    const p=ipos(i);
-    const px=p.x*CELL, py=p.y*CELL;
-
+  // Snake (draw tail-to-head so head is on top)
+  for (let i = snake.length-1; i >= 0; i--) {
+    const isHead = i === 0;
+    const p      = ipos(i);
+    const px     = p.x * CELL, py = p.y * CELL;
     let col;
-    if(activeEffect?.type==="speed") col=isHead?"#fff5a0":(i%2===0?"#f5c842":"#c8a020");
-    else if(activeEffect?.type==="slow") col=isHead?"#cce4ff":(i%2===0?"#79aaff":"#4a7acc");
-    else col=isHead?"#eef0f5":(i%2===0?"#c8fb4a":"#8fb82e");
-
-    // body segments slightly smaller toward tail for depth feel
+    if      (activeEffect?.type === "speed") col = isHead ? "#fff5a0" : (i%2===0 ? "#f5c842" : "#c8a020");
+    else if (activeEffect?.type === "slow")  col = isHead ? "#cce4ff" : (i%2===0 ? "#79aaff" : "#4a7acc");
+    else                                     col = isHead ? "#eef0f5" : (i%2===0 ? "#c8fb4a" : "#8fb82e");
     const shrink = isHead ? 1 : Math.max(0.7, 1 - i*0.008);
-    const pad = (1 + (1-shrink)*CELL*0.5);
-
-    ctx.fillStyle=col;
+    const pad    = 1 + (1-shrink)*CELL*0.5;
+    ctx.fillStyle = col;
     ctx.beginPath();
     ctx.roundRect(px+pad, py+pad, CELL-pad*2, CELL-pad*2, isHead?4:2);
     ctx.fill();
-
-    if(isHead){
-      ctx.fillStyle="#0b0c0f";
-      const cx=px+CELL/2, cy=py+CELL/2;
-      if(dir.y===0){
-        ctx.beginPath();ctx.arc(cx+dir.x*2,cy-3,2,0,Math.PI*2);ctx.fill();
-        ctx.beginPath();ctx.arc(cx+dir.x*2,cy+3,2,0,Math.PI*2);ctx.fill();
+    if (isHead) {
+      ctx.fillStyle = "#0b0c0f";
+      const cx = px+CELL/2, cy = py+CELL/2;
+      if (dir.y === 0) {
+        ctx.beginPath(); ctx.arc(cx+dir.x*2, cy-3, 2, 0, Math.PI*2); ctx.fill();
+        ctx.beginPath(); ctx.arc(cx+dir.x*2, cy+3, 2, 0, Math.PI*2); ctx.fill();
       } else {
-        ctx.beginPath();ctx.arc(cx-3,cy+dir.y*2,2,0,Math.PI*2);ctx.fill();
-        ctx.beginPath();ctx.arc(cx+3,cy+dir.y*2,2,0,Math.PI*2);ctx.fill();
+        ctx.beginPath(); ctx.arc(cx-3, cy+dir.y*2, 2, 0, Math.PI*2); ctx.fill();
+        ctx.beginPath(); ctx.arc(cx+3, cy+dir.y*2, 2, 0, Math.PI*2); ctx.fill();
       }
     }
   }
 
-  ctx.fillStyle="#6b7080"; ctx.font="10px 'Courier New'"; ctx.textAlign="left"; ctx.textBaseline="alphabetic";
-  ctx.fillText(`LVL ${level}`,6,H-6);
-  const lt=`LEN ${snake.length}`; ctx.fillText(lt,W-ctx.measureText(lt).width-6,H-6);
+  // Eat particles
+  particles = particles.filter(p => p.life > 0);
+  particles.forEach(p => {
+    p.x    += p.vx;
+    p.y    += p.vy;
+    p.life -= 0.07;
+    if (p.life <= 0) return;
+    ctx.globalAlpha = p.life;
+    ctx.fillStyle   = p.color;
+    ctx.beginPath();
+    ctx.arc(p.x, p.y, 3 * p.life, 0, Math.PI*2);
+    ctx.fill();
+  });
+  ctx.globalAlpha = 1;
 
-  // ── neon border ──
-  const borderPulse=0.55+0.45*Math.sin(now/900);
+  // NEW BEST flash
+  if (newBestAchieved && gameRunning) {
+    const pulse = 0.5 + 0.5 * Math.sin(now / 200);
+    ctx.fillStyle    = `rgba(200,251,74,${0.5 + 0.4*pulse})`;
+    ctx.font         = "bold 10px 'Courier New'";
+    ctx.textAlign    = "center";
+    ctx.textBaseline = "alphabetic";
+    ctx.shadowColor  = "#c8fb4a";
+    ctx.shadowBlur   = 6;
+    ctx.fillText("★ NEW BEST ★", W/2, 18);
+    ctx.shadowBlur   = 0;
+  }
+
+  // HUD: LVL / LEN
+  ctx.fillStyle    = "#6b7080";
+  ctx.font         = "10px 'Courier New'";
+  ctx.textAlign    = "left";
+  ctx.textBaseline = "alphabetic";
+  ctx.fillText(`LVL ${level}`, 6, H-6);
+  const lt = `LEN ${snake.length}`;
+  ctx.fillText(lt, W - ctx.measureText(lt).width - 6, H-6);
+
+  // Neon border
+  const borderPulse = 0.55 + 0.45 * Math.sin(now/900);
   let borderColor;
-  if(activeEffect?.type==="speed") borderColor=`rgba(245,200,66,${0.35*borderPulse})`;
-  else if(activeEffect?.type==="slow") borderColor=`rgba(121,170,255,${0.35*borderPulse})`;
-  else borderColor=`rgba(200,251,74,${0.18+0.08*borderPulse})`;
+  if      (activeEffect?.type === "speed") borderColor = `rgba(245,200,66,${0.35*borderPulse})`;
+  else if (activeEffect?.type === "slow")  borderColor = `rgba(121,170,255,${0.35*borderPulse})`;
+  else                                     borderColor = `rgba(200,251,74,${0.18+0.08*borderPulse})`;
   ctx.save();
-  ctx.shadowColor=borderColor; ctx.shadowBlur=12;
-  ctx.strokeStyle=borderColor; ctx.lineWidth=1.5;
-  ctx.strokeRect(1,1,W-2,H-2);
-  ctx.shadowBlur=0; ctx.restore();
+  ctx.shadowColor = borderColor; ctx.shadowBlur = 12;
+  ctx.strokeStyle = borderColor; ctx.lineWidth  = 1.5;
+  ctx.strokeRect(1, 1, W-2, H-2);
+  ctx.shadowBlur = 0;
+  ctx.restore();
 }
 
-function renderLegend(){
-  document.getElementById("food-legend").innerHTML=FOOD_TYPES.map(f=>
-    `<div class="legend-item"><div class="legend-dot" style="background:${f.color}"></div><span style="color:${f.color}">${f.glyph}</span><span>${f.name}</span></div>`
-  ).join("");
-}
-function renderFoodGuide(){
-  document.getElementById("food-guide").innerHTML=FOOD_TYPES.map(f=>
-    `<div class="food-row"><div class="food-sym" style="background:${f.color}22;border:1px solid ${f.color}55"><span style="color:${f.color};font-size:13px">${f.glyph}</span></div><div><div class="food-name" style="color:${f.color}">${f.name}</div><div class="food-desc">${f.desc}</div></div></div>`
-  ).join("");
+// ── Death frame — snapped to grid, red flash ──────────────────────────────────
+function drawDeathFrame() {
+  ctx.fillStyle = "#0b0c0f";
+  ctx.fillRect(0, 0, W, H);
+  // grid
+  ctx.strokeStyle = "#111318"; ctx.lineWidth = 0.5;
+  for (let x=0; x<=COLS; x++) { ctx.beginPath(); ctx.moveTo(x*CELL,0); ctx.lineTo(x*CELL,H); ctx.stroke(); }
+  for (let y=0; y<=ROWS; y++) { ctx.beginPath(); ctx.moveTo(0,y*CELL); ctx.lineTo(W,y*CELL); ctx.stroke(); }
+  // snake — no interpolation, grid-snapped, red palette
+  snake.forEach((seg, i) => {
+    ctx.fillStyle = i===0 ? "#fb4a6e" : (i%2===0 ? "#a03040" : "#802030");
+    const pad = i===0 ? 1 : 2;
+    ctx.beginPath();
+    ctx.roundRect(seg.x*CELL+pad, seg.y*CELL+pad, CELL-pad*2, CELL-pad*2, i===0?4:2);
+    ctx.fill();
+  });
+  // danger tint
+  ctx.fillStyle = "rgba(251,74,110,0.18)";
+  ctx.fillRect(0, 0, W, H);
+  // red neon border
+  ctx.save();
+  ctx.shadowColor = "#fb4a6e"; ctx.shadowBlur = 24;
+  ctx.strokeStyle = "rgba(251,74,110,0.85)"; ctx.lineWidth = 2;
+  ctx.strokeRect(1, 1, W-2, H-2);
+  ctx.shadowBlur = 0;
+  ctx.restore();
 }
 
-async function endGame(){
-  gameRunning=false; clearTimeout(tickTimer); clearTimeout(effectTimer); clearTimeout(foodExpireTimer); cancelAnimationFrame(animFrame); activeEffect=null;
-  elapsed=Math.floor((Date.now()-startTime)/1000);
-  if(hasSave){await fetch(`${API}/save/${TG_USER.id}`,{method:"DELETE"});hasSave=false;}
-  const res=await apiPost("/score",{user_id:TG_USER.id,username:TG_USER.username,first_name:TG_USER.first_name,score,length:snake.length,duration:elapsed});
-  userGames++; if(score>userBest) userBest=score;
-  document.getElementById("over-score").textContent=score;
-  document.getElementById("over-meta").innerHTML=
+// ── End game ──────────────────────────────────────────────────────────────────
+async function endGame() {
+  gameRunning = false;
+  clearTimeout(tickTimer);
+  clearTimeout(effectTimer);
+  cancelAnimationFrame(animFrame);
+  clearAllFoodTimers();
+  foods        = [];
+  activeEffect = null;
+  elapsed      = Math.floor((Date.now() - startTime) / 1000);
+
+  // Show death frame, pause so player sees it
+  drawDeathFrame();
+  await new Promise(r => setTimeout(r, 450));
+
+  if (hasSave) {
+    await fetch(`${API}/save/${TG_USER.id}`, {method:"DELETE"});
+    hasSave = false;
+  }
+
+  let res = null;
+  try {
+    res = await apiPost("/score", {
+      user_id:    TG_USER.id,
+      username:   TG_USER.username,
+      first_name: TG_USER.first_name,
+      score, length: snake.length, duration: elapsed
+    });
+  } catch(e) {
+    console.error("Score submit failed:", e);
+  }
+
+  userGames++;
+  if (score > userBest) userBest = score;
+
+  document.getElementById("over-score").textContent = score;
+  document.getElementById("over-meta").innerHTML =
     `Length: <span>${snake.length}</span>&nbsp;·&nbsp;Time: <span>${fmtTime(elapsed)}</span>&nbsp;·&nbsp;Level: <span>${level}</span>`;
-  const eaten=FOOD_TYPES.filter(f=>foodStats[f.id]?.count);
-  document.getElementById("food-breakdown").innerHTML=eaten.length
-    ?eaten.map(f=>{const s=foodStats[f.id];return`<div class="breakdown-row"><div class="breakdown-left"><span style="color:${f.color}">${f.glyph} ${f.name}</span></div><div style="display:flex;gap:16px"><span style="color:var(--muted)">×${s.count}</span><span class="breakdown-val">+${s.pts}</span></div></div>`;}).join("")
-    :`<div style="font-size:11px;color:var(--muted);text-align:center;padding:4px 0">no food eaten</div>`;
-  document.getElementById("over-rank").textContent=res?.rank?`#${res.rank} on leaderboard`:"";
+
+  const eaten = FOOD_TYPES.filter(f => foodStats[f.id]?.count);
+  document.getElementById("food-breakdown").innerHTML = eaten.length
+    ? eaten.map(f => {
+        const s = foodStats[f.id];
+        return `<div class="breakdown-row"><div class="breakdown-left"><span style="color:${f.color}">${f.glyph} ${f.name}</span></div><div style="display:flex;gap:16px"><span style="color:var(--muted)">×${s.count}</span><span class="breakdown-val">+${s.pts}</span></div></div>`;
+      }).join("")
+    : `<div style="font-size:11px;color:var(--muted);text-align:center;padding:4px 0">no food eaten</div>`;
+
+  document.getElementById("over-rank").textContent = res?.rank ? `#${res.rank} on leaderboard` : "";
   show("over");
 }
 
-async function saveGame(){
-  await apiPost("/save",{user_id:TG_USER.id,state:{snake,dir,foods,score,level,foodEaten,foodStats,elapsed:Math.floor((Date.now()-startTime)/1000)}});
-  hasSave=true;
-}
-async function continueGame(){
-  const data=await apiGet(`/save/${TG_USER.id}`);
-  if(!data?.save){startNewGame();return;}
-  initGame(data.save); show("game");
-}
-function startNewGame(){
-  if(hasSave) fetch(`${API}/save/${TG_USER.id}`,{method:"DELETE"});
-  hasSave=false; initGame(); show("game");
+// ── Save / continue ───────────────────────────────────────────────────────────
+async function saveGame() {
+  // Strip timerId (not serialisable / meaningless after reload)
+  const saveFoods = foods.map(({ timerId, ...rest }) => rest);
+  await apiPost("/save", {
+    user_id: TG_USER.id,
+    state: {
+      snake, dir,
+      foods:     saveFoods,
+      score, level, foodEaten, foodStats,
+      elapsed:   Math.floor((Date.now() - startTime) / 1000)
+    }
+  });
+  hasSave = true;
 }
 
-async function apiPost(path,body){try{const r=await fetch(API+path,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(body)});return await r.json();}catch{return null;}}
-async function apiGet(path){try{const r=await fetch(API+path);if(!r.ok)return null;return await r.json();}catch{return null;}}
+async function continueGame() {
+  const data = await apiGet(`/save/${TG_USER.id}`);
+  if (!data?.save) { startNewGame(); return; }
+  initGame(data.save);
+  show("game");
+}
 
-async function initUser(){
-  await apiPost("/user",{user_id:TG_USER.id,username:TG_USER.username,first_name:TG_USER.first_name});
-  const data=await apiGet(`/user/${TG_USER.id}`);
-  if(data){userBest=data.best_score||0;userGames=data.games||0;}
+function startNewGame() {
+  if (hasSave) fetch(`${API}/save/${TG_USER.id}`, {method:"DELETE"});
+  hasSave = false;
+  initGame();
+  show("game");
+}
+
+// ── API ───────────────────────────────────────────────────────────────────────
+async function apiPost(path, body) {
+  try {
+    const r = await fetch(API + path, {
+      method: "POST",
+      headers: {"Content-Type":"application/json"},
+      body: JSON.stringify(body)
+    });
+    return await r.json();
+  } catch { return null; }
+}
+
+async function apiGet(path) {
+  try {
+    const r = await fetch(API + path);
+    if (!r.ok) return null;
+    return await r.json();
+  } catch { return null; }
+}
+
+// ── User / leaderboard ────────────────────────────────────────────────────────
+async function initUser() {
+  await apiPost("/user", {
+    user_id:    TG_USER.id,
+    username:   TG_USER.username,
+    first_name: TG_USER.first_name
+  });
+  const data = await apiGet(`/user/${TG_USER.id}`);
+  if (data) { userBest = data.best_score || 0; userGames = data.games || 0; }
   updateHomeUI();
-  const sd=await apiGet(`/save/${TG_USER.id}`);
-  hasSave=!!(sd?.save);
-  document.getElementById("btn-continue").style.display=hasSave?"block":"none";
-}
-function updateHomeUI(){
-  const name=TG_USER.first_name||"Player";
-  document.getElementById("home-name").textContent=name;
-  document.getElementById("home-avatar").textContent=initials(name);
-  document.getElementById("home-best").textContent=userBest||"—";
-  document.getElementById("home-games").textContent=userGames||"0";
+  const sd = await apiGet(`/save/${TG_USER.id}`);
+  hasSave = !!(sd?.save);
+  document.getElementById("btn-continue").style.display = hasSave ? "block" : "none";
 }
 
-async function loadLeaderboard(){
-  const list=document.getElementById("board-list");
-  list.innerHTML='<div class="board-empty">Loading...</div>';
-  const data=await apiGet("/leaderboard?limit=50");
-  if(!data?.leaderboard?.length){list.innerHTML='<div class="board-empty">No scores yet</div>';return;}
-  const rc=i=>i===0?"gold":i===1?"silver":i===2?"bronze":"";
-  const rs=i=>i===0?"①":i===1?"②":i===2?"③":`${i+1}`;
-  list.innerHTML=data.leaderboard.map((u,i)=>`
+function updateHomeUI() {
+  const name = TG_USER.first_name || "Player";
+  document.getElementById("home-name").textContent    = name;
+  document.getElementById("home-avatar").textContent  = initials(name);
+  document.getElementById("home-best").textContent    = userBest  || "—";
+  document.getElementById("home-games").textContent   = userGames || "0";
+}
+
+async function loadLeaderboard() {
+  const list = document.getElementById("board-list");
+  list.innerHTML = '<div class="board-empty">Loading...</div>';
+  const data = await apiGet("/leaderboard?limit=50");
+  if (!data?.leaderboard?.length) {
+    list.innerHTML = '<div class="board-empty">No scores yet</div>';
+    return;
+  }
+  const rc = i => i===0?"gold":i===1?"silver":i===2?"bronze":"";
+  const rs = i => i===0?"①":i===1?"②":i===2?"③":`${i+1}`;
+  list.innerHTML = data.leaderboard.map((u, i) => `
     <div class="board-row ${u.user_id===TG_USER.id?"me":""}">
       <div class="board-rank ${rc(i)}">${rs(i)}</div>
       <div class="board-av">${initials(u.first_name)}</div>
@@ -561,33 +779,57 @@ async function loadLeaderboard(){
     </div>`).join("");
 }
 
-function show(id){document.querySelectorAll(".screen").forEach(s=>s.classList.remove("active"));document.getElementById(id).classList.add("active");}
-const DIRS={UP:{x:0,y:-1},DOWN:{x:0,y:1},LEFT:{x:-1,y:0},RIGHT:{x:1,y:0}};
+// ── Render helpers ────────────────────────────────────────────────────────────
+function renderLegend() {
+  document.getElementById("food-legend").innerHTML = FOOD_TYPES.map(f =>
+    `<div class="legend-item"><div class="legend-dot" style="background:${f.color}"></div><span style="color:${f.color}">${f.glyph}</span><span>${f.name}</span></div>`
+  ).join("");
+}
+
+function renderFoodGuide() {
+  document.getElementById("food-guide").innerHTML = FOOD_TYPES.map(f =>
+    `<div class="food-row"><div class="food-sym" style="background:${f.color}22;border:1px solid ${f.color}55"><span style="color:${f.color};font-size:13px">${f.glyph}</span></div><div><div class="food-name" style="color:${f.color}">${f.name}</div><div class="food-desc">${f.desc}</div></div></div>`
+  ).join("");
+}
+
+function show(id) {
+  document.querySelectorAll(".screen").forEach(s => s.classList.remove("active"));
+  document.getElementById(id).classList.add("active");
+}
+
+const initials = name => (name||"?").split(" ").map(w=>w[0]).join("").toUpperCase().slice(0,2);
+
+// ── Directions ────────────────────────────────────────────────────────────────
+const DIRS = {
+  UP:    {x:0,  y:-1},
+  DOWN:  {x:0,  y:1 },
+  LEFT:  {x:-1, y:0 },
+  RIGHT: {x:1,  y:0 }
+};
 
 // ── Haptic ────────────────────────────────────────────────────────────────────
-function haptic(type="light"){
-  // Telegram WebApp haptic
-  try{ window.Telegram?.WebApp?.HapticFeedback?.impactOccurred(type); } catch{}
-  // Fallback: browser vibration
-  try{ navigator.vibrate?.(type==="light"?18:35); } catch{}
+function haptic(type="light") {
+  try { window.Telegram?.WebApp?.HapticFeedback?.impactOccurred(type); } catch{}
+  try { navigator.vibrate?.(type==="light" ? 18 : 35); } catch{}
 }
 
-function setDir(d){
-  const last = dirQueue.length>0 ? dirQueue[dirQueue.length-1] : dir;
-  if(d.x===-last.x && d.y===-last.y) return; // no 180 against last queued
-  if(d.x===last.x && d.y===last.y) return;    // exact duplicate
-  if(dirQueue.length<4) { dirQueue.push(d); haptic("light"); }
+// ── Direction input (FIX: anti-180 against physical dir + queue size 3) ───────
+function setDir(d) {
+  // Hard block: can't reverse against current physical movement
+  if (d.x === -dir.x && d.y === -dir.y) return;
+  const last = dirQueue.length > 0 ? dirQueue[dirQueue.length-1] : dir;
+  // Block against last queued dir too
+  if (d.x === -last.x && d.y === -last.y) return;
+  // Block exact duplicate
+  if (d.x === last.x && d.y === last.y) return;
+  if (dirQueue.length < 3) { dirQueue.push(d); haptic("light"); }
 }
 
-// ── D-pad: pointer capture + slide detection ──────────────────────────────────
+// ── D-pad: pointer capture + slide-between-buttons ───────────────────────────
 const dpadBtns = document.querySelectorAll(".dpad-btn");
-
-// Map each button element to its direction
 const btnDirMap = new Map();
 dpadBtns.forEach(btn => btnDirMap.set(btn, DIRS[btn.dataset.dir]));
-
-// Which element is currently under a pointer id
-const activePointers = new Map(); // pointerId → last btn
+const activePointers = new Map();
 
 function btnFromPoint(x, y) {
   const el = document.elementFromPoint(x, y);
@@ -599,69 +841,90 @@ dpadBtns.forEach(btn => {
     e.preventDefault();
     btn.setPointerCapture(e.pointerId);
     activePointers.set(e.pointerId, btn);
-    if(gameRunning && !gamePaused) setDir(btnDirMap.get(btn));
+    if (gameRunning && !gamePaused) setDir(btnDirMap.get(btn));
   });
-
   btn.addEventListener("pointermove", e => {
-    if(!activePointers.has(e.pointerId)) return;
+    if (!activePointers.has(e.pointerId)) return;
     e.preventDefault();
-    // find button under current position
     btn.releasePointerCapture(e.pointerId);
     const target = btnFromPoint(e.clientX, e.clientY);
-    if(target && target !== activePointers.get(e.pointerId)) {
+    if (target && target !== activePointers.get(e.pointerId)) {
       activePointers.set(e.pointerId, target);
-      try{ target.setPointerCapture(e.pointerId); } catch{}
-      if(gameRunning && !gamePaused) setDir(btnDirMap.get(target));
+      try { target.setPointerCapture(e.pointerId); } catch{}
+      if (gameRunning && !gamePaused) setDir(btnDirMap.get(target));
     } else {
-      try{ btn.setPointerCapture(e.pointerId); } catch{}
+      try { btn.setPointerCapture(e.pointerId); } catch{}
     }
   });
-
-  btn.addEventListener("pointerup", e => { activePointers.delete(e.pointerId); });
+  btn.addEventListener("pointerup",     e => { activePointers.delete(e.pointerId); });
   btn.addEventListener("pointercancel", e => { activePointers.delete(e.pointerId); });
 });
 
-document.addEventListener("keydown",e=>{
-  const m={ArrowUp:"UP",ArrowDown:"DOWN",ArrowLeft:"LEFT",ArrowRight:"RIGHT",w:"UP",s:"DOWN",a:"LEFT",d:"RIGHT"};
-  if(m[e.key]){e.preventDefault();setDir(DIRS[m[e.key]]);}
-  if(e.key==="Escape"||e.key==="p") togglePause();
+// ── Keyboard ──────────────────────────────────────────────────────────────────
+document.addEventListener("keydown", e => {
+  const m = {
+    ArrowUp:"UP", ArrowDown:"DOWN", ArrowLeft:"LEFT", ArrowRight:"RIGHT",
+    w:"UP", s:"DOWN", a:"LEFT", d:"RIGHT"
+  };
+  if (m[e.key]) { e.preventDefault(); setDir(DIRS[m[e.key]]); }
+  if (e.key === "Escape" || e.key === "p") togglePause();
 });
-let touchStart=null;
-canvas.addEventListener("touchstart",e=>{touchStart={x:e.touches[0].clientX,y:e.touches[0].clientY};},{passive:true});
-canvas.addEventListener("touchend",e=>{
-  if(!touchStart)return;
-  const dx=e.changedTouches[0].clientX-touchStart.x, dy=e.changedTouches[0].clientY-touchStart.y;
-  if(Math.abs(dx)<8&&Math.abs(dy)<8){touchStart=null;return;} // ignore taps
-  if(Math.abs(dx)>Math.abs(dy)) setDir(dx>0?DIRS.RIGHT:DIRS.LEFT); else setDir(dy>0?DIRS.DOWN:DIRS.UP);
-  touchStart=null;
-},{passive:true});
 
-function togglePause(){
-  if(!gameRunning)return;
-  gamePaused=!gamePaused;
-  document.getElementById("pause-overlay").classList.toggle("show",gamePaused);
-  if(!gamePaused){tickTimer=setTimeout(tick,curSpeed());drawLoop();}
-  else{clearTimeout(tickTimer);cancelAnimationFrame(animFrame);}
+// ── Swipe on canvas ───────────────────────────────────────────────────────────
+let touchStart = null;
+canvas.addEventListener("touchstart", e => {
+  touchStart = {x: e.touches[0].clientX, y: e.touches[0].clientY};
+}, {passive:true});
+canvas.addEventListener("touchend", e => {
+  if (!touchStart) return;
+  const dx = e.changedTouches[0].clientX - touchStart.x;
+  const dy = e.changedTouches[0].clientY - touchStart.y;
+  if (Math.abs(dx) < 8 && Math.abs(dy) < 8) { touchStart = null; return; }
+  if (Math.abs(dx) > Math.abs(dy)) setDir(dx>0 ? DIRS.RIGHT : DIRS.LEFT);
+  else                              setDir(dy>0 ? DIRS.DOWN  : DIRS.UP);
+  touchStart = null;
+}, {passive:true});
+
+// ── Pause ─────────────────────────────────────────────────────────────────────
+function togglePause() {
+  if (!gameRunning) return;
+  gamePaused = !gamePaused;
+  document.getElementById("pause-overlay").classList.toggle("show", gamePaused);
+  if (!gamePaused) { tickTimer = setTimeout(tick, curSpeed()); drawLoop(); }
+  else             { clearTimeout(tickTimer); cancelAnimationFrame(animFrame); }
 }
 
-document.getElementById("pause-btn").onclick=togglePause;
-document.getElementById("btn-resume").onclick=togglePause;
-document.getElementById("btn-quit").onclick=async()=>{
-  clearTimeout(tickTimer);cancelAnimationFrame(animFrame);clearTimeout(foodExpireTimer);gameRunning=false;
-  await saveGame();
-  document.getElementById("btn-continue").style.display="block";
-  updateHomeUI();show("home");
-};
-document.getElementById("btn-new").onclick=startNewGame;
-document.getElementById("btn-continue").onclick=continueGame;
-document.getElementById("btn-board-home").onclick=()=>{loadLeaderboard();show("board");};
-document.getElementById("btn-retry").onclick=startNewGame;
-document.getElementById("btn-over-board").onclick=()=>{loadLeaderboard();show("board");};
-document.getElementById("btn-over-home").onclick=()=>{updateHomeUI();show("home");};
-document.getElementById("board-refresh").onclick=loadLeaderboard;
-document.getElementById("nav-home").onclick=()=>{updateHomeUI();show("home");};
-document.getElementById("nav-play").onclick=startNewGame;
+// ── Auto-pause when tab loses focus ──────────────────────────────────────────
+document.addEventListener("visibilitychange", () => {
+  if (document.hidden && gameRunning && !gamePaused) togglePause();
+});
 
+// ── Button wiring ─────────────────────────────────────────────────────────────
+document.getElementById("pause-btn").onclick    = togglePause;
+document.getElementById("btn-resume").onclick   = togglePause;
+
+document.getElementById("btn-quit").onclick = async () => {
+  clearTimeout(tickTimer);
+  cancelAnimationFrame(animFrame);
+  clearAllFoodTimers();
+  gameRunning = false;
+  await saveGame();
+  document.getElementById("btn-continue").style.display = "block";
+  updateHomeUI();
+  show("home");
+};
+
+document.getElementById("btn-new").onclick        = startNewGame;
+document.getElementById("btn-continue").onclick   = continueGame;
+document.getElementById("btn-board-home").onclick = () => { loadLeaderboard(); show("board"); };
+document.getElementById("btn-retry").onclick      = startNewGame;
+document.getElementById("btn-over-board").onclick = () => { loadLeaderboard(); show("board"); };
+document.getElementById("btn-over-home").onclick  = () => { updateHomeUI(); show("home"); };
+document.getElementById("board-refresh").onclick  = loadLeaderboard;
+document.getElementById("nav-home").onclick       = () => { updateHomeUI(); show("home"); };
+document.getElementById("nav-play").onclick       = startNewGame;
+
+// ── Boot ──────────────────────────────────────────────────────────────────────
 renderFoodGuide();
 initUser();
 </script>
